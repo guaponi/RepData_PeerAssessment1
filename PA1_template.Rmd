@@ -8,18 +8,236 @@ output:
 
 ## Loading and preprocessing the data
 
+```{r message=FALSE }
+# Load libraries
+library(dplyr)
+library(lubridate)
 
+```
+<h6> Load helper functions (they are printed at the end of the document) </h6>
+* convert_interval_values [0 5 10 ... 55 100 105 ... converts to 0 5 10 ... 55 60 65 ... ]
+* convert_interval_back2original [55 60 65 ... converts to 55 100 105 ... ]
+* imputedata [a suitable dataframe that works as a lookuptable and a dataframe returns imputed dataframe ]
+```{r echo=FALSE}
+# Helper-functions OBS! will be echoed in the end of the document
+# we have gap in the timeseries. Motivation see playground.R
+convert_interval_values <- function(interval){
+  # 0 5 .... 55 100 105 ... converts to 0 5 .... 55 60 65 ...
+  a <- interval %/% 100
+  b <- interval %% 100 
+  res <- a * 60 + b
+  return(res)
+}
+
+# Convert back to original value on interval
+convert_interval_back2original <- function(interval) {
+  # 55 converts to 55
+  # 60 converts to 100
+  # 125 converts to 205
+  a <- interval %/% 60
+  b <- interval %% 60 
+  res <- a * 100 + b
+  return(res)
+  
+}
+
+# # lut provides key - value pairs to use to impute "steps" data
+# imputedata <- function(lut , df) {
+#   # lut is a dataframe providing suitable replacement for missing values 
+#   names(lut) <- c("key", "value")
+#   na_ind <- is.na(df$steps)
+#   intervals2impute <- df[na_ind, "interval"]
+#   to_impute <- lut[intervals2impute %in% lut$key ,"value"]
+#   df$steps[na_ind] <- to_impute
+#   return(df)
+#   #to_impute
+# }
+
+imputedata <- function(lut , df) {
+  # lut is a dataframe providing suitable replacement for missing values 
+  names(lut) <- c("key", "value")
+  na_ind <- is.na(df$steps)
+  intervals2impute <- df[na_ind, "interval"]
+  
+  myvar_vec <- vector()
+  for(i in seq_along(intervals2impute[[1]])) {
+    e <- intervals2impute[[1]][i]
+    myvar_vec[i] <- lut[lut$key==e,]$value
+  }
+  df_temp <- df
+  df_temp[na_ind,]$steps <- myvar_vec[[1]]
+  df_temp
+}
+
+
+```
+```{r echo=FALSE}
+# # Load data (if on local computer)
+# if(!file.exists("activity.zip")) {
+#   url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip"
+#   dest <- "activity.zip"
+#   download.file(url = url, destfile = dest)
+#   # Uncomment if on local computer 
+#   #unzip(zipfile = "activity.zip")
+# }
+# df <- read.table(file = "activity.csv", header = TRUE, 
+#                  colClasses = colClasses, sep="," )
+
+
+```
+<h3> Load data </h3>
+```{r}
+# If on github (else if on local computer, see code commented out or in playground.r)
+if(!file.exists("activity.zip")) {
+  print("activity.zip not found")
+  print("if on local computer uncomment code above and comment out this codechunk")
+  stop("missing activity.zip in working directory")
+}
+colClasses <- c("numeric", "Date", "numeric")
+# For use on github (don't unzip)
+df <- read.table(file = unz("activity.zip", "activity.csv"), header = TRUE, 
+                 colClasses = colClasses, sep="," )
+
+
+```
+<h3> Transform data to suitable format (tbl_df and changes in interval) </h3>
+```{r}
+
+df <- tbl_df(df)
+df$interval2 <- convert_interval_values(df$interval)
+
+
+# Let's remove the original interval
+df <- df %>%
+  select(steps, date, interval = interval2)
+
+
+```
 
 ## What is mean total number of steps taken per day?
 
+```{r}
+# Calculate the total number of steps taken per day
+df_tot <- df %>%
+  group_by(date) %>%
+  summarize(total_steps = sum(steps, na.rm = TRUE))
+```
+
+```{r}
+# histogram of the total number of steps taken each day
+hist(df_tot$total_steps, breaks = 20, xlab = "Steps per day")
+```
+
+```{r}
+#mean and median of the total number of steps taken per day
+mean_and_median <- df_tot %>%
+  summarize(avg_steps_per_day = mean(total_steps, na.rm = TRUE), 
+          median_steps_per_day = median(total_steps, na.rm = TRUE))
+
+print(paste("Mean steps/day: ",round(mean_and_median$avg_steps_per_day,digits = 1)))
+print(paste("Median steps/day: ",mean_and_median$median_steps_per_day))
+
+
+# mean and median steps/day
+# OBS! dates with only NA in steps will have result 0 in the summarize
+# another option would be to remove steps with NA as value --> less dates
+
+```
 
 
 ## What is the average daily activity pattern?
 
+```{r}
+df_interval <- df %>%
+  group_by(interval) %>%
+  summarize(avg_steps_per_interval = mean(steps, na.rm = TRUE))
 
 
+
+
+ind <- which(df_interval$avg_steps_per_interval == max(df_interval$avg_steps_per_interval))
+max_int <- df_interval[ind, "interval"][[1]]
+
+with(df_interval,plot(x= interval, 
+                      y = avg_steps_per_interval, type="l"))
+abline(v = max_int, lwd = 2, col = "red")
+
+```
+
+```{r}
+# Which 5-minute interval, on average across all the days in the dataset, contains the maximum number of steps?
+str1 <- paste("Max steps on average was taken in interval = ", max_int, " indicated by red line ")
+str2 <- paste("or in original interval unit : ", convert_interval_back2original(max_int) )
+print(str1)
+print(str2)
+
+
+```
 ## Imputing missing values
+```{r}
+df_interval_median <- df %>%
+  group_by(interval) %>%
+  summarize(median_steps_per_interval = median(steps, na.rm = TRUE))
 
+df_interval_max <- df %>%
+  group_by(interval) %>%
+  summarize(max_steps_per_interval = max(steps, na.rm = TRUE))
+
+df_imputed1 <- imputedata(lut = df_interval_median, df)
+
+df_imputed2 <- imputedata(lut = df_interval_max, df)
+
+print(df_imputed1)
+df_interval_imputed2 <- df_imputed2 %>%
+            group_by(interval) %>%
+            summarize(avg_steps_per_interval = mean(steps, na.rm = TRUE))
+
+# with(df_interval_imputed2,plot(x= interval, 
+#                       y = avg_steps_per_interval, type="l"))
+
+```
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+
+
+
+
+## Helper functions loaded before analysis
+```{r echo=TRUE}
+# Helper-functions OBS! will be echoed in the end of the document
+# we have gap in the timeseries. Motivation see playground.R
+convert_interval_values <- function(interval){
+  # 0 5 .... 55 100 105 ... converts to 0 5 .... 55 60 65 ...
+  a <- interval %/% 100
+  b <- interval %% 100 
+  res <- a * 60 + b
+  return(res)
+}
+
+# Convert back to original value on interval
+convert_interval_back2original <- function(interval) {
+  # 55 converts to 55
+  # 60 converts to 100
+  # 125 converts to 205
+  a <- interval %/% 60
+  b <- interval %% 60 
+  res <- a * 100 + b
+  return(res)
+  
+  # lut provides key - value pairs to use to impute "steps" data
+imputedata <- function(lut , df) {
+  # lut is a dataframe providing suitable replacement for missing values 
+  names(lut) <- c("key", "value")
+  na_ind <- is.na(df$steps)
+  intervals2impute <- df[na_ind, "interval"]
+  to_impute <- lut[intervals2impute %in% lut$key ,"value"]
+  df$steps[na_ind] <- to_impute
+  df
+  to_impute
+}
+
+  
+}
+
